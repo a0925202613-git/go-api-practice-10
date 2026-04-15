@@ -1,0 +1,218 @@
+{
+	"info": {
+		"name": "go-api-practice-10 活動售票系統",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{ "key": "baseUrl", "value": "http://localhost:8085" },
+		{ "key": "token", "value": "demo-token-123" },
+		{ "key": "eventId", "value": "1" },
+		{ "key": "orderId", "value": "1" }
+	],
+	"item": [
+		{
+			"name": "Auth",
+			"item": [
+				{
+					"name": "GET /me（有 token）",
+					"request": {
+						"method": "GET",
+						"url": "{{baseUrl}}/api/me",
+						"header": [
+							{ "key": "Authorization", "value": "Bearer {{token}}" }
+						]
+					}
+				},
+				{
+					"name": "GET /me（沒有 token → 401）",
+					"request": {
+						"method": "GET",
+						"url": "{{baseUrl}}/api/me"
+					}
+				}
+			]
+		},
+		{
+			"name": "Events",
+			"item": [
+				{
+					"name": "GET /events（全部）",
+					"request": {
+						"method": "GET",
+						"url": "{{baseUrl}}/api/events"
+					}
+				},
+				{
+					"name": "GET /events?available=true",
+					"request": {
+						"method": "GET",
+						"url": "{{baseUrl}}/api/events?available=true"
+					}
+				},
+				{
+					"name": "GET /events/:id",
+					"request": {
+						"method": "GET",
+						"url": "{{baseUrl}}/api/events/{{eventId}}"
+					}
+				},
+				{
+					"name": "GET /events/999（不存在 → 404）",
+					"request": {
+						"method": "GET",
+						"url": "{{baseUrl}}/api/events/999"
+					}
+				},
+				{
+					"name": "POST /events（新增活動）",
+					"request": {
+						"method": "POST",
+						"url": "{{baseUrl}}/api/events",
+						"header": [
+							{ "key": "Authorization", "value": "Bearer {{token}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"測試音樂會\",\n  \"venue\": \"台北國際會議中心\",\n  \"price\": 1800,\n  \"total_stock\": 50,\n  \"event_date\": \"2026-10-01T19:00:00+08:00\"\n}"
+						}
+					}
+				},
+				{
+					"name": "POST /events（缺欄位 → 400）",
+					"request": {
+						"method": "POST",
+						"url": "{{baseUrl}}/api/events",
+						"header": [
+							{ "key": "Authorization", "value": "Bearer {{token}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"缺少欄位的活動\"\n}"
+						}
+					}
+				},
+				{
+					"name": "PUT /events/:id（更新活動）",
+					"request": {
+						"method": "PUT",
+						"url": "{{baseUrl}}/api/events/{{eventId}}",
+						"header": [
+							{ "key": "Authorization", "value": "Bearer {{token}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"五月天 2026 巡迴演唱會（加場）\",\n  \"venue\": \"台北小巨蛋\",\n  \"price\": 3000,\n  \"total_stock\": 150,\n  \"event_date\": \"2026-07-16T19:00:00+08:00\"\n}"
+						}
+					}
+				},
+				{
+					"name": "DELETE /events/:id（刪除活動）",
+					"request": {
+						"method": "DELETE",
+						"url": "{{baseUrl}}/api/events/{{eventId}}",
+						"header": [
+							{ "key": "Authorization", "value": "Bearer {{token}}" }
+						]
+					}
+				}
+			]
+		},
+		{
+			"name": "Ticket Orders",
+			"item": [
+				{
+					"name": "POST /ticket-orders（購票）",
+					"request": {
+						"method": "POST",
+						"url": "{{baseUrl}}/api/ticket-orders",
+						"header": [
+							{ "key": "Authorization", "value": "Bearer {{token}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"event_id\": 1,\n  \"customer_name\": \"小明\",\n  \"quantity\": 2\n}"
+						}
+					}
+				},
+				{
+					"name": "POST /ticket-orders（庫存不足 → 400）",
+					"request": {
+						"method": "POST",
+						"url": "{{baseUrl}}/api/ticket-orders",
+						"header": [
+							{ "key": "Authorization", "value": "Bearer {{token}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"event_id\": 6,\n  \"customer_name\": \"小明\",\n  \"quantity\": 1\n}"
+						}
+					}
+				},
+				{
+					"name": "GET /ticket-orders（全部訂單）",
+					"request": {
+						"method": "GET",
+						"url": "{{baseUrl}}/api/ticket-orders"
+					}
+				},
+				{
+					"name": "GET /ticket-orders/:id",
+					"request": {
+						"method": "GET",
+						"url": "{{baseUrl}}/api/ticket-orders/{{orderId}}"
+					}
+				},
+				{
+					"name": "POST /ticket-orders/:id/cancel（取消訂單）",
+					"request": {
+						"method": "POST",
+						"url": "{{baseUrl}}/api/ticket-orders/{{orderId}}/cancel",
+						"header": [
+							{ "key": "Authorization", "value": "Bearer {{token}}" }
+						]
+					}
+				}
+			]
+		},
+		{
+			"name": "Rush 搶票模擬",
+			"item": [
+				{
+					"name": "POST /rush/without-lock（不加鎖 → 可能超賣）",
+					"request": {
+						"method": "POST",
+						"url": "{{baseUrl}}/api/rush/without-lock",
+						"header": [
+							{ "key": "Authorization", "value": "Bearer {{token}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"event_id\": 5,\n  \"buyers\": 20\n}"
+						}
+					}
+				},
+				{
+					"name": "POST /rush/with-lock（有加鎖 → 不超賣）",
+					"request": {
+						"method": "POST",
+						"url": "{{baseUrl}}/api/rush/with-lock",
+						"header": [
+							{ "key": "Authorization", "value": "Bearer {{token}}" },
+							{ "key": "Content-Type", "value": "application/json" }
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"event_id\": 4,\n  \"buyers\": 20\n}"
+						}
+					}
+				}
+			]
+		}
+	]
+}
