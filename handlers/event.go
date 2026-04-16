@@ -16,15 +16,52 @@ import (
 // 支援 query 參數：available（"true" 或 "false"）篩選是否還有票。
 func GetEvents(c *gin.Context) {
 	// TODO: 用 c.Query("available") 取出 query 參數
+	available := c.Query("available")
 	// TODO: 動態組出 SQL 的 WHERE 條件（參考 practice-9 的 GetFlowers）
+	query := "SELECT * FROM events"
+	
+	var conditions []string // 儲存 WHERE 條件
+	var args []interface{} // 儲存對應的參數值
+	
+	// 動態組裝 WHERE 條件
+	if available != "" {
+		if parsedBool, err := strconv.ParseBool(available); err == nil {
+			// 使用 len(args)+1 動態產生 $1, $2...
+			conditions = append(conditions, "available = $" + strconv.Itoa(len(args)+1))
+			args = append(args, parsedBool)
+		}
+	}
+
+	// 如果有收集到條件，才加上 WHERE 並用 AND 串接
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	// 確保輸出順序一致
+	query += " ORDER BY id ASC"
+
 	// TODO: 用 database.DB.Query(query, args...) 查詢
+	rows, err := database.DB.Query(query, args...)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
 	// TODO: defer rows.Close()
+	defer rows.Close()
 	// TODO: 用 for rows.Next() 迴圈，每一列用 rows.Scan() 掃進 models.Event
+	events := []models.Event{}
+	for rows.Next() {
+		var e models.Event
+		err := rows.Scan(&e.ID, &e.Name, &e.Venue, &e.Price, &e.TotalStock, &e.Available, &e.EventDate, &e.CreatedAt, &e.UpdatedAt)
+		if err != nil {
+			respondError(c, err)
+			return
+		}
+		events = append(events, e)
+	}
+
 	// TODO: 回傳 200 與 []models.Event（空陣列也沒關係）
-	_ = database.DB  // 避免 import 報錯，實作後可移除
-	_ = strconv.Itoa // 避免 import 報錯，實作後可移除
-	_ = strings.Join // 避免 import 報錯，實作後可移除
-	c.JSON(http.StatusOK, []models.Event{})
+	c.JSON(http.StatusOK, events)
 }
 
 // GetEventByID 依網址上的 id 取得單一筆活動。
