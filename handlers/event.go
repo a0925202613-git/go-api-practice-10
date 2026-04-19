@@ -161,19 +161,70 @@ func CreateEvent(c *gin.Context) {
 // 若該 id 不存在，回傳 404；更新成功後回傳 200 與更新後完整資料。
 func UpdateEvent(c *gin.Context) {
 	// TODO: 取出 id、用 ShouldBindJSON 綁定 body
+	id, ok := parseID(c, "id")
+	if !ok {
+		return // parseID 已經回傳錯誤訊息了，這裡直接結束
+	}
+
+	var input models.Event // 準備用來裝前端傳來的資料
+	if err := c.ShouldBindJSON(&input); err != nil {
+		status, body := formatValidationError(err)
+		c.JSON(status, body)
+		return
+	}
+
+	var event models.Event
+
 	// TODO: UPDATE 該筆活動的 name, venue, price, total_stock, event_date，記得更新 updated_at
+	query := `
+		UPDATE events SET name = $1, venue = $2, price = $3, total_stock = $4, event_date = $5, updated_at = NOW()
+		WHERE id = $6
+		RETURNING id, name, venue, price, total_stock, stock, available, event_date, created_at, updated_at
+		`
+	err := database.DB.QueryRow(query, input.Name, input.Venue, input.Price, input.TotalStock, input.EventDate, id).Scan(
+		&event.ID, &event.Name, &event.Venue, &event.Price, &event.TotalStock, &event.Stock, &event.Available, &event.EventDate, &event.CreatedAt, &event.UpdatedAt)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"error": "不存在"})
+		} else {
+			respondError(c, err)
+		}
+		return
+
+	}
 	// TODO: 用 RETURNING 取回完整資料
 	// TODO: 若 sql.ErrNoRows 回傳 404
 	// TODO: 成功回傳 200
-	c.JSON(http.StatusOK, gin.H{})
+	c.JSON(http.StatusOK, event)
 }
 
 // DeleteEvent 依網址上的 id 刪除一筆活動（此 API 需帶 token）。
 // 若該 id 不存在，回傳 404；刪除成功回傳 200 與成功訊息。
 func DeleteEvent(c *gin.Context) {
 	// TODO: 取出 id
+	id, ok := parseID(c, "id")
+	if !ok {
+		return // parseID 已經回傳錯誤訊息了，這裡直接結束
+	}
 	// TODO: DELETE 該筆活動
+	query := "DELETE FROM events WHERE id = $1"
 	// TODO: 用 result.RowsAffected() 判斷有沒有真的刪到；0 筆 → 404
+	result, err := database.DB.Exec(query, id)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	if rowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "不存在"})
+		return
+	}
 	// TODO: 刪除成功回傳 200, gin.H{"message": "活動刪除成功"}
-	c.JSON(http.StatusOK, gin.H{})
+	c.JSON(http.StatusOK, gin.H{"message": "品項成功刪除"})
 }
