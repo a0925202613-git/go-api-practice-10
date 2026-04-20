@@ -106,23 +106,60 @@ func CreateTicketOrder(c *gin.Context) {
 	}
 	// TODO: 從 events 表查出該活動的 price，計算 totalPrice
 	query := "SELECT price FROM events WHERE id = $1"
-	var price int
+	var price int // 1. 先準備好裝單價的變數
 
-	err := database.DB.QueryRow(query, input.EventID).Scan(&price)
+	err := database.DB.QueryRow(query, input.EventID).Scan(&price) // 2. 讓 Scan 把資料存進 price
 	if err != nil {
 		respondError(c, err)
 		return
 	}
-	input.TotalPrice = price * input.Quantity
+	input.TotalPrice = price * input.Quantity // 3. 用真正的單價來算總金額，存回 input 裡
+
 	// TODO: 開 transaction（database.DB.Begin()），記得 defer tx.Rollback()
+	tx, err := database.DB.Begin()
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	defer tx.Rollback()
 
 	// TODO: 用 tx.QueryRow INSERT 訂單，RETURNING 取回完整欄位，Scan 進 models.TicketOrder
+	insertQuery := `
+	INSERT INTO ticket_orders (event_id, customer_name, quantity, total_price)
+	VALUES ($1, $2, $3, $4)
+	RETURNING id, event_id, customer_name, quantity, total_price, status, ordered_at, cancelled_at, created_at, updated_at
+	`
+	var neworders models.TicketOrder
+	err = tx.QueryRow(insertQuery, input.EventID, input.CustomerName, input.Quantity, input.TotalPrice).Scan(
+		&neworders.ID, &neworders.EventID, &neworders.CustomerName, &neworders.Quantity, &neworders.TotalPrice,
+		&neworders.Status, &neworders.OrderedAt, &neworders.CancelledAt, &neworders.CreatedAt, &neworders.UpdatedAt,
+	)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
 
 	// TODO: 用 tx.Exec 扣庫存，庫存歸零時同時把 available 設為 false
 	//       提示：可以用 CASE WHEN ... THEN ... ELSE ... END 來判斷
+	updateQuery := `
+	UPDATE events
+	SET stock = stock - $1,
+	available = CASE WHEN stock - $1 <= 0 THEN false ELSE true END
+	WHERE id = $2
+	`
+	_, err = tx.Exec(updateQuery, input.Quantity, input.EventID)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
 
 	// TODO: tx.Commit()，成功回傳 201 與訂單資料
-	c.JSON(http.StatusCreated, gin.H{})
+	if err := tx.Commit(); err != nil {
+		respondError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusCreated, neworders)
 }
 
 // CancelTicketOrder 將訂單狀態從 pending 改為 cancelled，並還原庫存（此 API 需帶 token）。
@@ -135,21 +172,72 @@ func CreateTicketOrder(c *gin.Context) {
 //  6. Commit
 func CancelTicketOrder(c *gin.Context) {
 	// TODO: 取出 id
-
+	id, ok := parseID(c, "id")
+	if !ok {
+		return
+	}
 	// TODO: 呼叫 validateOrderCanCancel(c, id)
 	//       若 err != nil → 回傳 400 然後 return
-
+	if err := validateOrderCanCancel(c, id); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 	// TODO: 從 ticket_orders 查出 event_id 和 quantity（等等還原庫存要用）
+	query := "SELECT event_id, quantity FROM ticket_orders WHERE id = $1"
+	var eventID, quantity int
+
+	if err := database.DB.QueryRow(query, id).Scan(&eventID, &quantity); err != nil {
+		respondError(c, err)
+		return
+	}
 
 	// TODO: 開 transaction，defer tx.Rollback()
+	tx, err := database.DB.Begin()
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	defer tx.Rollback()
 
 	// TODO: 用 tx.QueryRow 更新訂單狀態為 cancelled，設定 cancelled_at=NOW()
 	//       RETURNING 取回完整欄位，Scan 進 models.TicketOrder
+	updatequery := `
+	UPDATE ticket_orders
+	SET status = 'cancelled', cancelled_at = NOW()
+	WHERE id = $1
+	RETURNING id, event_id, customer_name, quantity, total_price, status, ordered_at, cancelled_at, created_at, updated_at
+	`
+	var cancelledorders models.TicketOrder
+	err = tx.QueryRow(updatequery, id).Scan(
+		&cancelledorders.ID, &cancelledorders.EventID, &cancelledorders.CustomerName, &cancelledorders.Quantity,
+		&cancelledorders.TotalPrice, &cancelledorders.Status, &cancelledorders.OrderedAt, &cancelledorders.CancelledAt,
+		&cancelledorders.CreatedAt, &cancelledorders.UpdatedAt,
+	)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
 
 	// TODO: 用 tx.Exec 還原庫存（stock + quantity），把 available 設回 true
+	restoreQuery := `
+	UPDATE events
+	SET stock = stock + $1,
+	available = true
+	WHERE id = $2
+	`
+	_, err = tx.Exec(restoreQuery, quantity, eventID)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
 
 	// TODO: tx.Commit()，成功回傳 200 與更新後的訂單
-	c.JSON(http.StatusOK, gin.H{})
+	if err := tx.Commit(); err != nil {
+		respondError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, cancelledorders)
 }
 
 // ─── 內部驗證函式 ────────────────────────────────────────────
@@ -161,11 +249,24 @@ func CancelTicketOrder(c *gin.Context) {
 //     全部通過回傳 nil
 func validateEventForOrder(c *gin.Context, eventID, quantity int) error {
 	// TODO: 從 events 表查出 available 和 stock
+	query := "SELECT available, stock FROM events WHERE id = $1"
 	// TODO: 依序檢查三個條件，不符合就回傳對應的 error
+	var available bool
+	var stock int
+	err := database.DB.QueryRow(query, eventID).Scan(&available, &stock)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return errors.New("此活動不存在")
+		}
+		return err
+	}
+	if !available {
+		return errors.New("此活動已售完")
+	}
+	if stock < quantity {
+		return errors.New("票券庫存不足")
+	}
 	// TODO: 全部通過 return nil
-	_ = database.DB // 避免 import 報錯，實作後可移除
-	_ = sql.ErrNoRows
-	_ = errors.New
 	return nil
 }
 
@@ -175,7 +276,19 @@ func validateEventForOrder(c *gin.Context, eventID, quantity int) error {
 //     全部通過回傳 nil
 func validateOrderCanCancel(c *gin.Context, orderID int) error {
 	// TODO: 從 ticket_orders 查出 status
+	query := "SELECT status FROM ticket_orders WHERE id = $1"
 	// TODO: 檢查條件，不符合就回傳對應的 error
+	var status string
+	err := database.DB.QueryRow(query, orderID).Scan(&status)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return errors.New("訂單不存在")
+		}
+		return err
+	}
+	if status == "cancelled" {
+		return errors.New("此訂單已取消")
+	}
 	// TODO: 全部通過 return nil
 	return nil
 }
