@@ -126,8 +126,10 @@ func RunRushWithoutLock(req RushRequest) RushResult {
 
 	// TODO: 宣告 results，用 make([]BuyerResult, req.Buyers) 預先分配好位置
 	//       每個 goroutine 寫自己對應的 index（results[buyerID]），這樣不同 goroutine 不會互相干擾
+	results := make([]BuyerResult, req.Buyers)
 
 	// TODO: 宣告 var wg sync.WaitGroup
+	var wg sync.WaitGroup
 
 	// TODO: 用 for 迴圈跑 req.Buyers 次（i 從 0 到 req.Buyers-1）
 	//
@@ -153,10 +155,35 @@ func RunRushWithoutLock(req RushRequest) RushResult {
 	//
 	//       e. 成功 → results[buyerID] = BuyerResult{BuyerID: buyerID+1, Success: true, Message: "搶票成功！"}
 
-	// TODO: wg.Wait()  — 等所有 goroutine 都跑完
+	for i := 0; i < req.Buyers; i++ {
+		wg.Add(1)
 
-	// 以下是統計和回傳的部分（不用改）
-	results := make([]BuyerResult, req.Buyers) // ← 實作時移到上面
+		go func (buyerID int) {
+			defer wg.Done() // 離開時告訴 WaitGroup：這名買家忙完了
+
+			var stock int
+			err := database.DB.QueryRow("SELECT stock FROM events WHERE id = $1", req.EventID).Scan(&stock)
+			if err != nil {
+				results[buyerID] = BuyerResult{BuyerID: buyerID + 1, Success: false, Message: "查詢失敗: " + err.Error()}
+				return
+			}
+
+			if stock <= 0 {
+				results[buyerID] = BuyerResult{BuyerID: buyerID + 1, Success: false, Message: "票已售完"}
+				return
+			}
+
+			_, err = database.DB.Exec("UPDATE events SET stock = stock - 1, available = (stock - 1 > 0) WHERE id = $1", req.EventID)
+			if err != nil {
+				results[buyerID] = BuyerResult{BuyerID: buyerID + 1, Success: false, Message: "扣庫存失敗: " + err.Error()}
+				return
+			}
+
+			results[buyerID] = BuyerResult{BuyerID: buyerID + 1, Success: true, Message: "搶票成功！"}
+		}(i)
+	}
+	// TODO: wg.Wait()  — 等所有 goroutine 都跑完
+	wg.Wait()
 
 	// 搶票後查庫存
 	var stockAfter int
@@ -208,8 +235,10 @@ func RunRushWithLock(req RushRequest) RushResult {
 	database.DB.QueryRow("SELECT stock FROM events WHERE id = $1", req.EventID).Scan(&stockBefore)
 
 	// TODO: 宣告 results，用 make([]BuyerResult, req.Buyers) 預先分配
+	results := make([]BuyerResult, req.Buyers)
 
 	// TODO: 宣告 var wg sync.WaitGroup
+	var wg sync.WaitGroup
 
 	// TODO: 用 for 迴圈跑 req.Buyers 次
 	//
@@ -241,11 +270,52 @@ func RunRushWithLock(req RushRequest) RushResult {
 	//
 	//       g. 成功 → results[buyerID] = BuyerResult{BuyerID: buyerID+1, Success: true, Message: "搶票成功！"}
 
+	for i := 0; i < req.Buyers; i++ {
+		wg.Add(1)
+
+		go func (buyerID int) {
+			defer wg.Done()
+
+			tx, err := database.DB.Begin()
+			if err != nil {
+				results[buyerID] = BuyerResult{BuyerID: buyerID + 1, Success: false, Message: "開啟交易失敗: " + err.Error()}
+				return
+			}
+			defer tx.Rollback() // 中途出錯會自動回滾，釋放鎖
+
+			var stock int
+			err = tx.QueryRow("SELECT stock FROM events WHERE id = $1 FOR UPDATE", req.EventID).Scan(&stock)
+			if err != nil {
+				results[buyerID] = BuyerResult{BuyerID: buyerID + 1, Success: false, Message: "查詢失敗: " + err.Error()}
+				return
+			} //  增訂單 (tx.QueryRow)
+
+			if stock <= 0 {
+				results[buyerID] = BuyerResult{BuyerID: buyerID + 1, Success: false, Message: "票已售完"}
+				return
+			}
+
+			_, err = tx.Exec("UPDATE events SET stock = stock - 1, available = (stock - 1 > 0) WHERE id = $1", req.EventID)
+			if err != nil {
+				results[buyerID] = BuyerResult{BuyerID: buyerID + 1, Success: false, Message: "扣庫存失敗: " + err.Error()}
+				return
+			} // 扣除庫存 (tx.Exec)
+
+			if err := tx.Commit(); err != nil {
+				results[buyerID] = BuyerResult{BuyerID: buyerID + 1, Success: false, Message: "提交交易失敗: " + err.Error()}
+				return
+			}
+
+			results[buyerID] = BuyerResult{BuyerID: buyerID + 1, Success: true, Message: "搶票成功！"}
+
+		}(i)
+		
+	}
+
 	// TODO: wg.Wait()
+	wg.Wait()
 
-	// 以下是統計和回傳的部分（不用改）
-	results := make([]BuyerResult, req.Buyers) // ← 實作時移到上面
-
+	
 	// 搶票後庫存
 	var stockAfter int
 	database.DB.QueryRow("SELECT stock FROM events WHERE id = $1", req.EventID).Scan(&stockAfter)

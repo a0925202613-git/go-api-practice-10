@@ -161,7 +161,19 @@ func CreateEvent(c *gin.Context) {
 // 若該 id 不存在，回傳 404；更新成功後回傳 200 與更新後完整資料。
 func UpdateEvent(c *gin.Context) {
 	// TODO: 取出 id、用 ShouldBindJSON 綁定 body
+	id, ok := parseID(c, "id")
+	if !ok {
+		return // parseID 已經回傳錯誤訊息了，這裡直接結束
+	}
+	
+	var input models.Event // 準備用來裝前端傳來的資料
+	if err := c.ShouldBindJSON(&input); err != nil {
+		status, body := formatValidationError(err)
+		c.JSON(status, body)
+		return
+	}
 	// TODO: UPDATE 該筆活動的 name, venue, price, total_stock, event_date，記得更新 updated_at
+	query := "UPDATE "
 	// TODO: 用 RETURNING 取回完整資料
 	// TODO: 若 sql.ErrNoRows 回傳 404
 	// TODO: 成功回傳 200
